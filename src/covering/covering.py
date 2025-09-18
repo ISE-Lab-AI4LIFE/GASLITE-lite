@@ -9,6 +9,7 @@ from src.evaluate.data_stats import RetrievalDataStats
 from src.evaluate.evaluate_beir_offline import load_cached_eval
 from src.evaluate.evaluate_beir_online import full_evaluation_with_adv_passage_vecs
 from src.covering.covering_algos import covering_algo_name_to_func
+from huggingface_hub.utils._errors import EntryNotFoundError
 
 import logging
 
@@ -118,13 +119,18 @@ class CoverAlgorithm:
             filter_in_qids=self.filter_in_qids,
         )
         # 1.3. Load retrieval results:
-        results = load_cached_eval(
-            dataset_name=self.dataset_name,
-            model_hf_name=self.model_hf_name,
-            sim_func_name=self.sim_func,
-            data_split=self.data_split,
-            data_portion=self.data_portion,
-        )
+        try: 
+            results = load_cached_eval(
+                dataset_name=self.dataset_name,
+                model_hf_name=self.model_hf_name,
+                sim_func_name=self.sim_func,
+                data_split=self.data_split,
+                data_portion=self.data_portion,
+            )
+        except EntryNotFoundError as e:
+            print("[WARNING] Failed to fetch cached eval results, will continue without them (this is OK, just means less statistics will be available on the clustering). This warning may be resolved by caching this missing results; see README.md.")
+            results = None
+
         # 1.4. Embed the queries:
         q_embs = model.embed(qp_pairs_dataset['query'], to_cpu=True).cpu()  # In CPU to avoid OOM
         q_embs = torch.nn.functional.normalize(q_embs, p=2, dim=-1)  # Normalize query embeddings

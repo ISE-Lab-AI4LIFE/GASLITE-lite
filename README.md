@@ -15,9 +15,10 @@ The repository contains code for attacking retrieval models via crafting of pass
 For a quick demonstration of the attack, see the [demo notebook](./demo.ipynb), or run it [in Colab](http://githubtocolab.com/matanbt/gaslite/blob/main/demo.ipynb), showcasing the attack on concept-specific queries with a single adversarial passage. 
 
 ## Setup
-The project requires Python `3.8.5` and on and the installation of `pip install -r requirements.txt` (preferably in an isolated `venv`). 
+The project requires Python `3.8.5` and on and the installation of `pip install -r requirements.txt` (preferably in an isolated env: `conda create -n gaslite-env python=3.8.5`). 
 
-When cloning the project make sure to load included submodules, e.g. by: `git clone --recurse-submodules`. 
+- For recording metrics to `wandb`, you may need to [login](https://docs.wandb.ai/ref/cli/wandb-login/) to wandb. 
+- When cloning the project make sure to load included submodules, e.g. by: `git clone --recurse-submodules`. 
 For details on dependencies see [Dependencies](#dependencies) section.
     
 [//]: # (To update the submodules to the latest commit, run the following command:)

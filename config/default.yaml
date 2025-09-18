@@ -6,7 +6,6 @@ defaults:
   - dataset: msmarco-test  # to attack
   - constraints: as-suffix-tox
   - cover_alg: kmeans
-  - override hydra/launcher: joblib  # For parallelism of multiple jobs
 
 # General config:
 batch_size: 512  # technical parameter, to control the memory usage
@@ -16,9 +15,3 @@ log_to_wandb: True
 skip_if_cached: True
 exp_tag: 'default'
 exp_desc:
-
-
-# For parallelism of multiple jobs
-hydra:
-  launcher:
-    n_jobs: 1
