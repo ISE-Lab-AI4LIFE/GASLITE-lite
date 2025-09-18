@@ -44,6 +44,7 @@ def run_attack(cfg: DictConfig) -> None:
     wandb.log(metrics)
 
     # Save the 'results' artifact
+    os.makedirs(os.path.dirname(result_path), exist_ok=True)
     with open(result_path, 'w') as f:
         json.dump({
             **metrics,

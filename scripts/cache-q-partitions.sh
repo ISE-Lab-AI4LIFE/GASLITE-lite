@@ -32,7 +32,7 @@ for n_clusters in 1 5 10 15 20 25 30 35 40 45 50; do
 done
 
 
-### >>> Knows-All (targeting a whole dataset)
+### >>> Knows-Nothing (targeting a whole dataset)
 CMD=cache-clustering-and-eval
 DATA_SPLIT=train
 DATA_PORTION=0.05
