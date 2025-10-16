@@ -2,7 +2,8 @@ import os
 from typing import List
 
 from beir import util
-from beir.datasets.data_loader import GenericDataLoader
+# Use our custom GenericDataLoader with lazy loading support
+from src.generic_data_loader import GenericDataLoader
 import logging
 import random
 
@@ -70,11 +71,22 @@ def load_dataset(
     out_dir = os.path.join(os.getcwd(), "data")
     data_path = util.download_and_unzip(url, out_dir)
 
-    # MEMORY OPTIMIZATION: Load queries and qrels first (lightweight)
-    # Then filter corpus loading based on what we actually need
-    # This prevents loading 8.8M documents when we only need a fraction
-    logger.info("Loading queries and qrels (lightweight)...")
-    _, queries, qrels = GenericDataLoader(data_folder=data_path).load(split=data_split)
+    # MEMORY OPTIMIZATION: Use lazy loading to avoid loading entire corpus
+    # Step 1: Load queries and qrels first (lightweight - just metadata)
+    logger.info("Loading queries and qrels using lazy loading...")
+    loader = GenericDataLoader(data_folder=data_path)
+    loader.qrels_file = os.path.join(loader.qrels_folder, data_split + ".tsv")
+    
+    # Load queries using lazy iterator
+    queries = {q["_id"]: q["text"] for q in loader.iter_queries()}
+    
+    # Load qrels using lazy iterator
+    qrels = {}
+    for qid, cid, score in loader.iter_qrels():
+        qrels.setdefault(qid, {})[cid] = score
+    
+    # Filter queries by available qrels (same as GenericDataLoader.load())
+    queries = {qid: queries[qid] for qid in qrels if qid in queries}
     
     logger.info(f"Initial load: queries={len(queries)}, qrels={len(qrels)}")
 
@@ -126,28 +138,24 @@ def load_dataset(
     
     logger.info(f"Memory optimization: Need to load {len(relevant_pids)} relevant passages (out of potentially millions)")
     
-    # Now load ONLY the relevant corpus documents
-    # This is the key optimization - we don't load the full corpus into memory
-    import json
-    corpus_file = os.path.join(data_path, "corpus.jsonl")
-    
+    # Step 2: Load ONLY the relevant corpus documents using lazy iterator
+    # This is the key optimization - we stream corpus.jsonl and only keep what we need
     corpus = {}
-    logger.info(f"Loading only relevant passages from {corpus_file}...")
+    logger.info(f"Streaming corpus and loading only relevant passages...")
     
-    with open(corpus_file, 'r', encoding='utf-8') as f:
-        for line in f:
-            doc = json.loads(line)
-            pid = doc.get('_id')
+    for doc in loader.iter_corpus():
+        pid = doc.get('_id')
+        
+        # Only load documents we actually need
+        if pid in relevant_pids:
+            title = doc.get('title', '') or ''
+            text = doc.get('text', '') or ''
+            corpus[pid] = {'text': (title + ' ' + text).strip()}
             
-            # Only load documents we actually need
-            if pid in relevant_pids:
-                title = doc.get('title', '')
-                text = doc.get('text', '')
-                corpus[pid] = {'text': (title + ' ' + text).strip()}
-                
-                # Early exit if we've loaded all needed documents
-                if len(corpus) >= len(relevant_pids):
-                    break
+            # Early exit if we've loaded all needed documents
+            if len(corpus) >= len(relevant_pids):
+                logger.info(f"Found all {len(relevant_pids)} needed documents, stopping corpus scan")
+                break
     
     logger.info(f"Loaded data: {dataset_name=}, {len(corpus)=}, {len(queries)=}, {len(qrels)=}")
     
