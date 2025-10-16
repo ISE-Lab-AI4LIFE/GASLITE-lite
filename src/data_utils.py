@@ -70,10 +70,13 @@ def load_dataset(
     out_dir = os.path.join(os.getcwd(), "data")
     data_path = util.download_and_unzip(url, out_dir)
 
-    # Load the dataset
-    # TODO migrate to MTEB's HF datasets
-    corpus, queries, qrels = GenericDataLoader(data_folder=data_path).load(split=data_split)
-    corpus = {pid: {'text': (content['title'] + ' ' + content['text']).strip()} for pid, content in corpus.items()}
+    # MEMORY OPTIMIZATION: Load queries and qrels first (lightweight)
+    # Then filter corpus loading based on what we actually need
+    # This prevents loading 8.8M documents when we only need a fraction
+    logger.info("Loading queries and qrels (lightweight)...")
+    _, queries, qrels = GenericDataLoader(data_folder=data_path).load(split=data_split)
+    
+    logger.info(f"Initial load: queries={len(queries)}, qrels={len(qrels)}")
 
     # [OPTIONAL] Filter only relevant concepts from the queries
     if filter_concepts and not filter_in_qids:
@@ -116,18 +119,52 @@ def load_dataset(
         # Update `qrels` respectively (to contain only the sampled queries)
         qrels = {qid: qrel for i, (qid, qrel) in enumerate(qrels.items()) if qid in queries.keys()}
 
+    # CRITICAL MEMORY OPTIMIZATION: Identify which passages we need BEFORE loading corpus
+    relevant_pids = set()
+    for qid, pids_dict in qrels.items():
+        relevant_pids.update(pids_dict.keys())
+    
+    logger.info(f"Memory optimization: Need to load {len(relevant_pids)} relevant passages (out of potentially millions)")
+    
+    # Now load ONLY the relevant corpus documents
+    # This is the key optimization - we don't load the full corpus into memory
+    import json
+    corpus_file = os.path.join(data_path, "corpus.jsonl")
+    
+    corpus = {}
+    logger.info(f"Loading only relevant passages from {corpus_file}...")
+    
+    with open(corpus_file, 'r', encoding='utf-8') as f:
+        for line in f:
+            doc = json.loads(line)
+            pid = doc.get('_id')
+            
+            # Only load documents we actually need
+            if pid in relevant_pids:
+                title = doc.get('title', '')
+                text = doc.get('text', '')
+                corpus[pid] = {'text': (title + ' ' + text).strip()}
+                
+                # Early exit if we've loaded all needed documents
+                if len(corpus) >= len(relevant_pids):
+                    break
+    
     logger.info(f"Loaded data: {dataset_name=}, {len(corpus)=}, {len(queries)=}, {len(qrels)=}")
+    
     # [OPTIONAL] Format input text for specific models
+    # MEMORY OPTIMIZATION: Modify in-place where possible to avoid creating full copies
     if embedder_model_name == "intfloat/e5-base-v2":
         # https://huggingface.co/intfloat/e5-base-v2#faq
-        corpus = {pid: {'text': ('passage: ' + content['text'])} for pid, content in corpus.items()}
+        for pid in corpus:
+            corpus[pid]['text'] = 'passage: ' + corpus[pid]['text']
         queries = {qid: ('query: ' + text) for qid, text in queries.items()}
     elif embedder_model_name == "Salesforce/SFR-Embedding-Mistral":
         task_desc = 'Given a web search query, retrieve relevant passages that answer the query'
         queries = {qid: f'Instruct: {task_desc}\nQuery: {text}' for qid, text in queries.items()}
     elif embedder_model_name == "nomic-ai/nomic-embed-text-v1":
         # https://huggingface.co/nomic-ai/nomic-embed-text-v1#usage
-        corpus = {pid: {'text': ('search_document: ' + content['text'])} for pid, content in corpus.items()}
+        for pid in corpus:
+            corpus[pid]['text'] = 'search_document: ' + corpus[pid]['text']
         queries = {qid: ('search_query: ' + text) for qid, text in queries.items()}
     elif embedder_model_name in ['BAAI/bge-base-en-v1.5', 'Snowflake/snowflake-arctic-embed-m']:
         # https://huggingface.co/BAAI/bge-base-en-v1.5#frequently-asked-questions
@@ -148,6 +185,9 @@ def load_dataset(
 def _build_hf_dataset(corpus, queries, qrels) -> Dataset:
     # Build queries and passages pairs
     q_texts, q_ids, p_ids, p_texts = [], [], [], []
+    
+    # PERFORMANCE OPTIMIZATION: Move import outside loop and set seed once
+    random.seed(0)
 
     for qid, pids in qrels.items():
         pids: List[str] = list(pid for pid, rank in pids.items() if rank == 1)
@@ -156,8 +196,6 @@ def _build_hf_dataset(corpus, queries, qrels) -> Dataset:
         q_text = queries[qid]
 
         # Get passage; we only need one positive passage per query, other can be found via `qrels`.
-        import random
-        random.seed(0)
         gold_pid = random.choice(pids)
         p_text = corpus[gold_pid]['text']
         q_texts.append(q_text)
